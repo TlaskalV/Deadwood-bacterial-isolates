@@ -1,0 +1,30 @@
+# Unicycler command used to assemble genomes
+
+./unicycler_0.4.7 --short1 forward_R1.fastq.gz --short2 reverse_R1.fastq.gz --out ./output/isolate_X_output --threads 60 --verbosity 2 --min_fasta_length 100 --keep 1 --mode normal --min_polish_size 1000
+
+# prokka 1.13.3 command for gene prediction
+./prokka --kingdom Bacteria --mincontiglen 10 --cpus 60 --force --rnammer --outdir ./isolate_X_prokka --prefix isolate_X ./isolate_X_assembly.fas
+
+# GFF file handling with BEDOPS, awk, sed, seqkit
+# gff2bed, merge bed columns to get txt, rename faa file with aa of genes to have positions of genes
+for file in *.gff
+do
+strain_no=${file%%_genome.gff}
+	echo "---processing genome number ${strain_no}---"
+	./bedops_v2.4.36/bin/gff2bed < ${strain_no}_genome.gff > ${strain_no}_genome.bed &&
+	awk -v var="genome_$strain_no" ' { print $4 "\t" var "|" "k" $1 "_" $2 "_" $3 "_" $6 } ' ${strain_no}_genome.bed > ${strain_no}_genome_gene_pos.txt &&
+	sed -r 's/\ .+//' ${strain_no}_genome.faa > ${strain_no}_genome_short.faa &&
+	cat ${strain_no}_genome_short.faa | seqkit replace --ignore-case --keep-key --line-width 0 --kv-file <(cut -f 1,2 ${strain_no}_genome_gene_pos.txt) --pattern "^(\w+)" --replacement "{kv}" > ${strain_no}_gene_pos_map.faa &&
+	rm -v ${strain_no}_genome.bed &&
+	rm -v ${strain_no}_genome_short.faa
+done
+
+# merge faa together
+cat *_gene_pos_map.faa > all_genes_isolates.faa
+
+# isolate genecalls against dbCAN
+python ./dbCAN2/run_dbcan.py ./all_genes_isolates.faa protein --db_dir ./dbCAN2/ -t hmmer --out_dir ./dbcan --hmm_cpu 1 --dia_cpu 1
+
+# isolate genecalls against FOAM
+./hmmer-3.2.1/src/hmmsearch --tblout ./all_genes_isolates_foam.txt --noali --cpu 5 -E 1e-10 ./foam_db/FOAM-hmm_rel1a.hmm ./all_genes_isolates.faa
+
